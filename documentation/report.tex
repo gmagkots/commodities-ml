@@ -1,0 +1,208 @@
+\documentclass[12pt]{article}
+\usepackage{amssymb}
+\usepackage{amsfonts}
+\usepackage{amsmath}
+\usepackage{amsthm}
+\usepackage{titlesec}
+\usepackage{fontspec}
+\usepackage{lmodern}
+\usepackage{dsfont}
+\usepackage{color}
+\usepackage{fancybox}
+\usepackage[margin=0.7in]{geometry}
+\usepackage{url}
+\usepackage{setspace}
+\usepackage{graphicx}
+\usepackage{comment}
+\usepackage{enumitem}
+\usepackage{natbib}
+\usepackage{multirow}
+\usepackage{indentfirst}
+\usepackage{secdot}
+\usepackage{siunitx}
+\usepackage[bottom]{footmisc}
+\usepackage{fancyhdr}
+\usepackage{bm}
+\usepackage[labelfont=bf, justification=Justified]{caption}
+\usepackage[all]{nowidow}
+\usepackage{siunitx}
+\usepackage{floatrow}
+\floatsetup[table]{capposition=top}
+\usepackage{booktabs}
+\usepackage{afterpage}
+\usepackage{longtable}
+
+
+% set the main font (fontspec package)
+\setmainfont{Times New Roman}
+%\setmainfont[Renderer=Basic]{Times New Roman}
+
+% change the (sub)section default format
+\titleformat{\section}{\normalfont\Large\bfseries}{}{0pt}{}
+\titleformat{\subsection}{\normalfont\large\bfseries}{}{0pt}{}
+%%\titleformat{\subsubsection}{}{\thesubsubsection)}{1em}{}
+%\titleformat{\section}{\normalfont\huge\bfseries}{\thesection}{1em}{}
+%\titleformat{\subsection}{\normalfont\large\bfseries\slshape}{\thesubsection)}{1em}{}
+%\titleformat{\subsubsection}{\normalfont\normalsize\bfseries\slshape}{\thesubsubsection)}{1em}{}
+%
+%% change the section numbering to roman literals and subsection to letters and numbers
+%\renewcommand{\thesection}{\arabic{section}}
+%\renewcommand{\thesubsection}{\alph{subsection}}
+%\renewcommand{\thesubsubsection}{\alph{subsection}.\arabic{subsubsection}}
+
+% fonts for source code and files
+\renewcommand{\tt}[1]{\textbf{\texttt{#1}}}
+
+% longtable options to force textwidth span
+\setlength\LTleft{0pt}
+\setlength\LTright{0pt}
+
+% allow page breaking for multiple-line equations
+\allowdisplaybreaks
+
+
+\begin{document}
+
+\title{Machine Learning Methods For Thin Time-Series Data}
+\author{Georgios Magkotsios}
+\maketitle
+\thispagestyle{empty}
+
+
+\onehalfspacing
+
+
+
+\section{Raw data pre-processing}
+
+
+The column headers in the input spreadsheet are simple numbers. I rename the dependent variable (column ``0'') to $y$ and add a prefix for the rest of the features with the following conventions:
+\begin{itemize}
+	\item Prefix with $x$ the numerical (continuous) features.
+	\item Prefix with $d$ the categorical features. These are already encoded in $[0,1]$ format and can be used in regressions.
+	\item Prefix with $c$ the clustered features (see also Figure \ref{fig:cluster}).
+\end{itemize}
+For instance, the columns H-K (labeled 6-10) in the spreadsheet are renamed to $x6$, $d7$, $d8$, $d9$ and $x10$ respectively. The raw input data have certain characteristics that could cause problems during estimation and need to be pre-processed. Below are the steps taken:
+\begin{itemize}
+	\item There are no missing values in the raw data, no action required.
+	\item The true labels for the features are unknown. This limits the sanity checks that are feasible and it's hard to get a sense of potential outlier values. The dependent variable $y$ includes price differences. A visual inspection of a time series plot implies that the series is stationary and lacks outliers (see also Table \ref{tab:summ_stat}). No Dickey-Fuller tests are performed on $y$ or the features.
+	\item \underline{Redundant features} that are removed from sample:
+	\begin{itemize}
+		\item Features $x54$, $x55$, $x56$ and $x68$ have only zero values.
+		\item Feature $d53$ is linearly related to the categorical features $d49$-$d52$ and it would cause perfect collinearity if included with the rest. No VIF collinearity tests are performed to validate the visual inspection. However, the top panel of Figure \ref{fig:cluster} shows that the row and/or column correlations within the corresponding block add up to 1 for the non-diagonal elements which confirms the collinearity.
+	\end{itemize}
+	\item Some categorical features are well balanced in terms of zeros and ones, while others are sparse. Even the most sparse features with approximately 1200 zeros out of 1517 observations have adequate dispersion of ones during the sample period. However, $d60$ is severely imbalanced with 1500 zeros and it is removed from sample to reduce the noise in the other estimates.\footnote{Although there are ML techniques to deal with severely imbalanced data, they involve under- or over-sampling which can result in under- or overfitting respectively. Since we're not predicting $d60$ but $y$ instead, it's more practical to remove the feature.}
+	\item \underline{Scale differences}: the numerical feature values in the cross-section span multiple orders of magnitude and can be either positive or negative. The S-shaped transformation $x\rightarrow\mathrm{ArcSinh}(x)$ on the continuous features mitigates scale differences in the cross-section. This is an extension to the log-transform that behaves almost linearly within the range $[-1,1]$ and scales down large negative values too. In addition, this transformation doesn't utilize distribution moments that could artificially introduce look-ahead bias (e.g. estimating Z-scores across the full sample).
+	\item \underline{Feature clustering}: certain numeric features have similar long-term cyclical components or roughly the same annual seasonality. Therefore, they are highly correlated among each other. In the absence of labels that could provide economic intuition about their inclusion or removal from the list of features, I cluster the features that are similar and choose one representative feature per cluster. This practice helps with dimensionality reduction and simplifies the feature importance process. Clusters are formed based on Pearson correlation and the representative time series is the median among those that make the cluster. 
+	
+	The middle panel in Figure \ref{fig:cluster} shows a small part of the correlation heatmap for the continuous features that also identifies the clusters within a block-diagonal structure. The bottom panel in the figure illustrates the similarities between the cluster components and median series for cluster $c2$. The clusters can be identified visually by the heatmap and validated by a hierarchical clustering algorithm. Table \ref{tab:clusters} lists the constituent features for all clusters.
+	\item \underline{Cyclicality}: many numeric features are highly autocorrelated, with coefficients $AR(p)\approx1$ for orders even as large as $p=10$. Clustering still preserves the long-term cyclical patters that result in large autocorrelations. To mitigate concerns about integrated processes that could affect the quality of estimation results, I take first differences\footnote{Taking growth rates doesn't work because of intermittent zeros in various feature time series. Also, decomposing the series into trend, seasonal and residual components adds no value and only reconfirms that the seasonal component is practically the observed series.} for every feature with first-order autocorrelation $AR(1) > 0.8$. Table \ref{tab:summ_stat} shows the summary statistics for the processed feature data. 
+\end{itemize}
+
+\clearpage
+\input{summary_stat}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.85\textwidth]{collinearity} \\[0.5em]
+\includegraphics[width=0.85\textwidth]{corr_heatmap} \\[0.5em]
+\includegraphics[width=0.85\textwidth]{cluster1} 
+\caption{Correlation heatmap subset that highlights the identification of clustered variables based on Pearson correlation (top row) and time series of clustered features along with the representative median series that is used for model fits (bottom row).}
+\label{fig:cluster}
+\end{figure}
+
+\begin{table}[ht]
+\centering\small
+\caption{Constituents of clustered features.}
+\label{tab:clusters}
+\begin{tabular}{cl}
+\toprule
+Cluster	&	\multicolumn{1}{c}{Constituent Features} \\ \midrule
+c1	&	$x47$	,	$x48$	,	$x61$	,	$x62$	,	$x63$	,	$x64$	\\
+c2	&	$x10$	,	$x14$	,	$x16$	,	$x18$	,	$x20$	,	$x24$	,	$x26$	,	$x28$	,	$x30$	\\
+c3	&	$x70$	,	$x71$	,	$x73$	,	$x75$	,	$x81$	\\
+c4	&	$x2$	,	$x5$	,	$x37$	,	$x41$		\\
+c5	&	$x3$	,	$x38$	\\
+c6	&	$x33$	,	$x90$	\\
+c7	&	$x32$	,	$x79$	,	$x91$	\\
+c8	&	$x11$	,	$x15$	,	$x17$	,	$x19$	,	$x21$	,	$x27$	,	$x29$	,	$x31$		\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\section{Model estimation and strategy formation}
+
+\subsection{Strategy and benchmark weights}
+
+The estimation methodologies attempt to forecast return values. Equation (\ref{eq:weights}) shows a logistic function that transforms the return forecast into a normalized weight for holding long or shorting the security:
+\begin{align}
+	w_t = \frac{2}{1+e^{-10\hat y_t}} - 1 \ ,
+	\label{eq:weights}
+\end{align}
+where $\hat y_t$ is the return prediction and $w_t:\mathbb{R}\rightarrow[-1,1]$ is the security weight at time $t$. When $|\hat y_t|\rightarrow 0$ the signal is weak and the strategy is more conservative. However, when the prediction is large in absolute magnitude (strong signal) the security weight tilts rapidly towards 1 or -1 depending on the direction of the prediction.
+
+I compare the proposed strategies with two simple benchmarks. The first is long the asset with $w_t=1$, i.e. simply buying the asset in the beginning and holding it. The second is a simplified momentum strategy, where equation (\ref{eq:weights}) transforms into a weight the 3-day rolling cumulative return.
+
+\subsection{Estimation methodology}
+
+I use two modeling processes, a custom stepwise regression built on linear estimations and the other on random forests. The former provides for economic interpretability and a simplified feature importance analysis, but it can be affected by collinearity. The latter can capture nonlinearities in the data generating process but it can be subject to overfitting.
+
+The fundamental component of the stepwise algorithm is a rolling-window OLS regression. It includes time-varying exposures to the features and focuses on the most recent observations to derive the exposures for each period. The performance metric that is used to select the features is the Out-of-sample Adjusted R-squared (OAR), unlike the $p$-values that can result in overfitting. The out-of-sample setup implies that every rolling window is using information within the interval $[t-win-1, t-1]$ to make a prediction $\hat y_t$ at time $t$, where $win=300$ is the size of the time window. This size was chosen to capture the dynamics within one cycle across many feature time series that tend to have annual seasonality.
+
+The feature selection logic is the following:
+\begin{enumerate}
+	\item Test every feature individually and keep only those that have OAR above a minimum threshold. This results in a dimensionality reduction before the stepwise selection begins.
+	\item Start with the feature of maximum OAR from the previous stage and test every remaining feature with 2-variable regressions. The second feature will be the one that provides the largest OAR improvement relative to stage 1.
+	\item Repeat the process in stage \#2 by adding features recursively until no further OAR improvement is feasible or the list of candidate features is exhausted.
+\end{enumerate}
+
+This process usually selects a parsimonious basket of features, because the required improvement in prediction for every stage is out-of-sample and not easy to achieve. In addition, the order that the features are selected implies a feature importance analysis by construction. The most important feature is selected first, the second feature selected is the next most important, and so on until the last selected feature has the least non-zero importance score.
+
+The random forest estimation method is built similarly to the stepwise regression, where a different forest is trained within the same interval $[t-win-1, t-1]$ and the prediction $\hat y_t$ is made at time $t$. This approach intends to make the two methods consistent by embedding the assumption that only the most recent $win$ observations are valuable for prediction. Similarly to the stepwise regression, the method avoids imputed look-ahead biases and guarantees that security returns are predicted based on the information that is available until time $t-1$.
+
+The performance evaluation process involves a dual lagging of variables to ensure that no look-ahead biases are artificially introduced. Intuitively, the models predict $\hat y_t$ given the information about the features until time $t-1$. This forecast is then converted to a strategy weight at time $t$, and profits are realized at time $t+1$. For instance, the sequence of prediction and realized profits for the linear model is the following:
+\begin{enumerate}
+	\item $b_{t-1}f_t = \hat y_t$, where $f_t$ the vector of features and $b_{t-1}$ their time-varying exposures.
+	\item We buy or sell $w_t$ of the security at time $t$.
+	\item The realized profit is $w_ty_{t+1}$ at time $t+1$.
+\end{enumerate}
+
+\begin{table}[ht]
+\centering\small
+\caption{Strategy performance evaluation.}
+\label{tab:performance}
+\begin{tabular}{ccccc}
+\toprule
+\multirow{2}{*}{Strategy}		&	\multicolumn{2}{c}{Full Sample} &	\multicolumn{2}{c}{Backtest} \\ %\midrule
+ &	Sharpe Ratio & Max Drawdown &	Sharpe Ratio & Max Drawdown \\ \midrule
+rOLS	&	1.01	&	-8.90		&	2.36	&	-1.64		\\
+RF		&	0.99	&	-9.73		&	2.09	&	-1.47		\\
+Mom		&	-0.17	&	-11.38	&	-0.40	&	-3.37		\\
+Long	&	0.27	&	-11.98	&	1.75	&	-3.66		\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\subsection{Empirical results and backtesting}
+
+The features selected by the stepwise regression are (in order of decreasing importance): $x40$, $d8$, $x85$, $d44$, $c5$, $d43$ and $x42$. The optimal model performance attained is $OAR=0.8$. Table \ref{tab:clusters} shows that cluster $c5$ combines the features $x3$ and $x38$.\footnote{A supplementary feature importance analysis using Shapley values on the random forest model could cross-validate the results from the stepwise regression.} Table \ref{tab:performance} and Figure \ref{fig:performance} summarize the empirical performance and PnL properties of each strategy, where rOLS represents the stepwise regression, RF the random forest, Mom the momentum strategy and Long is holding the asset.
+
+Strategies rOLS and RF exhibit similar prediction capabilities and outperform the benchmarks. The outperformance stems from predicting correctly the direction of large jumps in the realized security returns and configuring the weights accordingly. Thus, they benefit both by buying and shorting the asset during those jumps. The drawdowns for the proposed strategies are smaller compared to the benchmark strategies.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.45\textwidth]{cumret}
+\includegraphics[width=0.45\textwidth]{drawdowns} \\
+\includegraphics[width=0.45\textwidth]{cumret_backtest}
+\includegraphics[width=0.45\textwidth]{drawdowns_backtest}
+\caption{Strategy cumulative returns (left column row) and drawdowns (right column). The top row corresponds to the out-of-sample strategy performance across the full sample period and the bottom row to a backtest where the model is trained during the pre-Covid era and tested during the pandemic.}
+\label{fig:performance}
+\end{figure}
+
+The analysis also includes a backtest to cross-validate the model performance for more than one periods ahead. The backtest is configured such that the state of the economy is different between the training and testing sets. In particular, the models are estimated before the Covid-19 era and then their performance is tested during the pandemic. Once again, the strategies rOLS and RF exhibit similar prediction capabilities and outperform the benchmarks.
+
+
+
+\end{document}
